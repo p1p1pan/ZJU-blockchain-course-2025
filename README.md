@@ -45,7 +45,7 @@
     ```
 7. 在 `./frontend` 中启动前端程序，运行如下的命令：
     ```bash
-    npm run start
+    npm run dev
     ```
 
 ## 功能实现分析

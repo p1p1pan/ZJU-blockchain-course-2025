@@ -1,46 +1,112 @@
-# Getting Started with Create React App
+# EasyBet Frontend
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+基于 Vue 3 + TypeScript + Vite 构建的去中心化彩票系统前端应用。
 
-## Available Scripts
+## 技术栈
 
-In the project directory, you can run:
+- **Vue 3** - 渐进式 JavaScript 框架
+- **TypeScript** - 类型安全的 JavaScript 超集
+- **Vite** - 快速的前端构建工具
+- **Vue Router** - Vue.js 官方路由管理器
+- **Pinia** - Vue 的状态管理库
+- **Ethers.js** - 以太坊 JavaScript 库
+- **Axios** - HTTP 客户端
 
-### `npm start`
+## 项目结构
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+```text
+frontend/
+├── public/                 # 静态资源
+├── src/
+│   ├── components/         # 可复用组件
+│   ├── views/             # 页面组件
+│   │   ├── Home.vue       # 首页
+│   │   ├── Activities.vue # 竞猜活动页面
+│   │   ├── MyTickets.vue  # 我的彩票页面
+│   │   └── Admin.vue      # 管理后台页面
+│   ├── router/            # 路由配置
+│   ├── stores/            # 状态管理
+│   │   └── contract.ts    # 合约交互状态
+│   ├── App.vue            # 根组件
+│   ├── main.ts            # 应用入口
+│   └── style.css          # 全局样式
+├── index.html             # HTML 模板
+├── vite.config.ts         # Vite 配置
+├── tsconfig.json          # TypeScript 配置
+└── package.json           # 项目依赖
+```
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## 可用脚本
 
-### `npm test`
+在项目目录中，你可以运行：
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### `npm run dev`
+
+启动开发服务器。\
+在浏览器中打开 [http://localhost:3000](http://localhost:3000) 查看应用。
+
+页面会在你编辑时自动重新加载。\
+你也会在控制台中看到任何 lint 错误。
 
 ### `npm run build`
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+构建生产版本的应用。\
+构建的文件会被正确地打包并优化以获得最佳性能。
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+构建会被压缩，文件名包含哈希值。\
+你的应用已经准备好部署了！
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### `npm run preview`
 
-### `npm run eject`
+预览生产构建的本地服务器。
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+## 功能特性
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+- 🎯 **竞猜活动管理** - 创建和管理各种竞猜项目
+- 🎫 **彩票购买** - 购买彩票并获得 ERC721 凭证
+- 🔄 **自由交易** - 在结果公布前自由买卖彩票
+- 🔒 **去中心化** - 基于区块链的透明交易
+- 👨‍💼 **管理后台** - 公证人功能，创建活动和结算
+- 📱 **响应式设计** - 适配各种设备尺寸
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+## 开发指南
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+### 环境要求
 
-## Learn More
+- Node.js >= 16.0.0
+- npm >= 8.0.0
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+### 安装依赖
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+```bash
+npm install
+```
+
+### 开发模式
+
+```bash
+npm run dev
+```
+
+### 构建生产版本
+
+```bash
+npm run build
+```
+
+## 与智能合约集成
+
+前端通过 `stores/contract.ts` 中的 Pinia store 与智能合约交互：
+
+- 钱包连接和账户管理
+- 合约方法调用
+- 交易状态跟踪
+- 错误处理
+
+## 了解更多
+
+- [Vue 3 文档](https://vuejs.org/)
+- [Vite 文档](https://vitejs.dev/)
+- [Vue Router 文档](https://router.vuejs.org/)
+- [Pinia 文档](https://pinia.vuejs.org/)
+- [Ethers.js 文档](https://docs.ethers.org/)
