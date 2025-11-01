@@ -5,6 +5,16 @@
       <p>公证人功能 - 创建和管理竞猜活动</p>
     </div>
 
+    <div v-if="!isConnected" class="permission-warning">
+      <p>请先连接钱包</p>
+    </div>
+
+    <div v-else-if="!isAdmin" class="permission-warning">
+      <p>您没有管理员权限，无法访问管理后台</p>
+    </div>
+
+    <div v-else>
+
     <div class="admin-tabs">
       <button 
         class="tab-button" 
@@ -29,7 +39,6 @@
       </button>
     </div>
 
-    <!-- 创建活动标签页 -->
     <div v-if="activeTab === 'create'" class="tab-content">
       <div class="card">
         <h2>创建新的竞猜活动</h2>
@@ -41,7 +50,7 @@
               type="text" 
               class="form-input" 
               required
-              placeholder="例如：NBA总决赛冠军"
+              placeholder="例如：xx总决赛冠军"
             />
           </div>
 
@@ -57,7 +66,7 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">奖池金额 (ETH)：</label>
+            <label class="form-label">奖池金额 (积分)：</label>
             <input 
               v-model="newActivity.prizePool" 
               type="number" 
@@ -89,15 +98,6 @@
                   placeholder="选项名称"
                   required
                 />
-                <input 
-                  v-model="choice.odds" 
-                  type="number" 
-                  class="form-input" 
-                  step="0.1"
-                  min="1.0"
-                  placeholder="赔率"
-                  required
-                />
                 <button 
                   type="button" 
                   class="btn btn-danger btn-sm"
@@ -118,16 +118,41 @@
           </div>
 
           <div class="form-actions">
-            <button type="submit" class="btn btn-success">创建活动</button>
-            <button type="button" class="btn" @click="resetForm">重置</button>
+            <button 
+              type="submit" 
+              class="btn btn-success"
+              :disabled="loading"
+            >
+              {{ loading ? '创建中...' : '创建活动' }}
+            </button>
+            <button 
+              type="button" 
+              class="btn" 
+              @click="resetForm"
+              :disabled="loading"
+            >
+              重置
+            </button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- 管理活动标签页 -->
     <div v-if="activeTab === 'manage'" class="tab-content">
-      <div class="activities-list">
+      <div v-if="loading" class="loading-state">
+        <p>正在加载活动...</p>
+      </div>
+
+      <div v-else-if="error" class="error-state">
+        <p>{{ error }}</p>
+        <button @click="loadActivities" class="btn btn-primary">重试</button>
+      </div>
+
+      <div v-else-if="activities.length === 0" class="empty-state">
+        <p>暂无活动</p>
+      </div>
+
+      <div v-else class="activities-list">
         <div v-for="activity in activities" :key="activity.id" class="activity-card">
           <div class="activity-header">
             <h3>{{ activity.title }}</h3>
@@ -141,7 +166,7 @@
           <div class="activity-stats">
             <div class="stat-item">
               <span class="label">奖池：</span>
-              <span class="value">{{ activity.prizePool }} ETH</span>
+              <span class="value">{{ activity.prizePool }} 积分</span>
             </div>
             <div class="stat-item">
               <span class="label">已售彩票：</span>
@@ -158,24 +183,30 @@
               v-if="activity.status === 'active'"
               class="btn btn-warning"
               @click="endActivity(activity.id)"
-            >
+              :disabled="loading" >
               结束活动
             </button>
-            <button 
-              v-if="activity.status === 'ended'"
-              class="btn btn-primary"
-              @click="startSettlement(activity.id)"
-            >
-              开始结算
-            </button>
+
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 结算活动标签页 -->
     <div v-if="activeTab === 'settle'" class="tab-content">
-      <div class="settlement-list">
+      <div v-if="loading" class="loading-state">
+        <p>正在加载活动...</p>
+      </div>
+
+      <div v-else-if="error" class="error-state">
+        <p>{{ error }}</p>
+        <button @click="loadActivities" class="btn btn-primary">重试</button>
+      </div>
+
+      <div v-else-if="activities.filter(a => a.status === 'ended').length === 0" class="empty-state">
+        <p>暂无需要结算的活动</p>
+      </div>
+
+      <div v-else class="settlement-list">
         <div v-for="activity in activities.filter(a => a.status === 'ended')" :key="activity.id" class="settlement-card">
           <h3>{{ activity.title }}</h3>
           
@@ -194,7 +225,6 @@
                   v-model="activity.winnerId"
                 />
                 <span class="choice-name">{{ choice.name }}</span>
-                <span class="choice-odds">(赔率: {{ choice.odds }})</span>
               </label>
             </div>
           </div>
@@ -203,24 +233,28 @@
             <button 
               class="btn btn-success"
               @click="settleActivity(activity.id)"
-              :disabled="!activity.winnerId"
+              :disabled="activity.winnerId === undefined || loading"
             >
-              确认结算
+              {{ loading ? '处理中...' : '确认结算' }}
             </button>
           </div>
         </div>
       </div>
     </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { useContractStore } from '@/stores/contract'
+import { ethers } from 'ethers'
+
+const contractStore = useContractStore()
 
 interface Choice {
   id: number
   name: string
-  odds: number
 }
 
 interface Activity {
@@ -233,10 +267,14 @@ interface Activity {
   soldTickets: number
   status: 'active' | 'ended' | 'settled'
   winnerId?: number
+  totalAmount: string
+  amountsPerChoice: { [key: number]: string }
 }
 
 const activeTab = ref<'create' | 'manage' | 'settle'>('create')
 const activities = ref<Activity[]>([])
+const loading = ref(false)
+const error = ref('')
 
 const newActivity = ref({
   title: '',
@@ -244,49 +282,94 @@ const newActivity = ref({
   prizePool: 1.0,
   deadline: '',
   choices: [
-    { name: '', odds: 2.0 },
-    { name: '', odds: 2.0 }
+    { name: '' },
+    { name: '' }
   ]
 })
+
+// 计算属性
+const isConnected = computed(() => contractStore.isConnected)
+const isAdmin = computed(() => contractStore.isAdmin)
 
 onMounted(() => {
-  loadActivities()
+  if (isConnected.value) {
+    loadActivities()
+  }
 })
 
-const loadActivities = () => {
-  // 模拟数据，实际应该从智能合约获取
-  activities.value = [
-    {
-      id: 1,
-      title: "NBA总决赛冠军",
-      description: "预测2025年NBA总决赛的冠军队伍",
-      choices: [
-        { id: 1, name: "湖人队", odds: 2.5 },
-        { id: 2, name: "勇士队", odds: 3.2 },
-        { id: 3, name: "凯尔特人队", odds: 2.8 }
-      ],
-      prizePool: 5.0,
-      deadline: "2025-06-15T23:59:59Z",
-      soldTickets: 45,
-      status: 'active'
-    },
-    {
-      id: 2,
-      title: "欧冠决赛结果",
-      description: "预测2025年欧冠决赛的胜负结果",
-      choices: [
-        { id: 1, name: "主队胜", odds: 1.8 },
-        { id: 2, name: "客队胜", odds: 2.1 },
-        { id: 3, name: "平局", odds: 3.5 }
-      ],
-      prizePool: 3.2,
-      deadline: "2025-05-30T21:00:00Z",
-      soldTickets: 28,
-      status: 'ended'
+// 加载活动
+const loadActivities = async () => {
+  if (!contractStore.contract) {
+    error.value = '请先连接钱包并加载合约'
+    return
+  }
+
+  loading.value = true
+  error.value = ''
+
+  try {
+    const nextActivityId = await contractStore.getNextActivityId()
+    const activitiesList: Activity[] = []
+
+    for (let i = 0; i < nextActivityId; i++) {
+      try {
+        const activityData = await contractStore.getActivity(i)
+        
+        // 检查活动是否存在
+        if (activityData.owner === '0x0000000000000000000000000000000000000000') {
+          continue
+        }
+
+        // 获取选项列表
+        const choices = await contractStore.getActivityChoices(i)
+
+        // 计算状态
+        const now = Math.floor(Date.now() / 1000)
+        const deadline = Number(activityData.listedTimestamp)
+        const isOver = activityData.over
+        const status = isOver ? 'settled' : (now > deadline ? 'ended' : 'active')
+
+        // 计算每个选项的投注金额
+        const amountsPerChoice: { [key: number]: string } = {}
+        for (let j = 0; j < choices.length; j++) {
+          const amount = await contractStore.getAmountsPerChoice(i, j)
+          amountsPerChoice[j] = ethers.formatEther(amount)
+        }
+
+        const activity: Activity = {
+          id: i,
+          title: `活动 #${i + 1}`,
+          description: activityData.description,
+          choices: choices.map((choice: string, index: number) => ({
+            id: index,
+            name: choice
+          })),
+          prizePool: parseFloat(ethers.formatEther(activityData.totalAmount)),
+          deadline: new Date(deadline * 1000).toISOString(),
+          
+          soldTickets: Number(activityData.soldTickets), 
+          
+          status,
+          totalAmount: ethers.formatEther(activityData.totalAmount),
+          amountsPerChoice
+        }
+
+        activitiesList.push(activity)
+      } catch (err) {
+        console.error(`获取活动 ${i} 失败:`, err)
+      }
     }
-  ]
+
+    activities.value = activitiesList
+  } catch (err) {
+    console.error('加载活动失败:', err)
+    error.value = '加载活动失败，请检查网络连接'
+  } finally {
+    loading.value = false
+  }
 }
 
+// 获取活动状态文本
 const getStatusText = (status: string) => {
   const statusMap = {
     active: '进行中',
@@ -296,20 +379,24 @@ const getStatusText = (status: string) => {
   return statusMap[status as keyof typeof statusMap] || status
 }
 
+// 格式化日期
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString('zh-CN')
 }
 
+// 添加选项
 const addChoice = () => {
-  newActivity.value.choices.push({ name: '', odds: 2.0 })
+  newActivity.value.choices.push({ name: '' })
 }
 
+// 删除选项
 const removeChoice = (index: number) => {
   if (newActivity.value.choices.length > 2) {
     newActivity.value.choices.splice(index, 1)
   }
 }
 
+// 重置表单
 const resetForm = () => {
   newActivity.value = {
     title: '',
@@ -317,49 +404,130 @@ const resetForm = () => {
     prizePool: 1.0,
     deadline: '',
     choices: [
-      { name: '', odds: 2.0 },
-      { name: '', odds: 2.0 }
+      { name: '' },
+      { name: '' }
     ]
   }
 }
 
-const createActivity = () => {
-  // 这里应该调用智能合约的创建活动函数
-  console.log('创建活动:', newActivity.value)
-  
-  // 模拟创建成功
-  alert('活动创建成功！')
-  resetForm()
-  loadActivities()
-}
+// 创建活动
+const createActivity = async () => {
+  if (!isConnected.value) {
+    alert('请先连接钱包')
+    return
+  }
 
-const endActivity = (activityId: number) => {
-  // 这里应该调用智能合约的结束活动函数
-  console.log('结束活动:', activityId)
-  
-  alert('活动已结束！')
-  loadActivities()
-}
+  if (!isAdmin.value) {
+    alert('您没有管理员权限')
+    return
+  }
 
-const startSettlement = (activityId: number) => {
-  // 这里应该调用智能合约的开始结算函数
-  console.log('开始结算:', activityId)
-  
-  alert('开始结算流程！')
-  loadActivities()
-}
+  // 验证表单
+  if (!newActivity.value.description.trim()) {
+    alert('请输入活动描述')
+    return
+  }
 
-const settleActivity = (activityId: number) => {
-  const activity = activities.value.find(a => a.id === activityId)
-  if (activity && activity.winnerId) {
-    // 这里应该调用智能合约的结算函数
-    console.log('结算活动:', {
-      activityId,
-      winnerId: activity.winnerId
-    })
+  if (newActivity.value.choices.length < 2) {
+    alert('至少需要两个选项')
+    return
+  }
+
+  for (const choice of newActivity.value.choices) {
+    if (!choice.name.trim()) {
+      alert('请填写所有选项名称')
+      return
+    }
+  }
+
+  if (!newActivity.value.deadline) {
+    alert('请选择截止时间')
+    return
+  }
+
+  if (new Date(newActivity.value.deadline) <= new Date()) {
+    alert('截止时间必须晚于当前时间')
+    return
+  }
+
+  try {
+    loading.value = true
     
+    const activityData = {
+      description: newActivity.value.description,
+      choices: newActivity.value.choices.map(choice => choice.name),
+      prizePool: newActivity.value.prizePool,
+      deadline: newActivity.value.deadline
+    }
+
+    const txHash = await contractStore.createActivity(activityData)
+    
+    console.log('活动创建成功，交易哈希:', txHash)
+    alert('活动创建成功！')
+    
+    resetForm()
+    await loadActivities()
+  } catch (error) {
+    console.error('创建活动失败:', error)
+    alert('创建活动失败，请检查网络连接和权限')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 提前结束活动
+const endActivity = async (activityId: number) => {
+  if (!isConnected.value) { 
+    alert('请先连接钱包');
+    return;
+  }
+
+  try {
+    loading.value = true;
+    const txHash = await contractStore.endBettingEarly(activityId);
+    console.log('活动已提前结束, tx:', txHash);
+    alert('活动投注已提前截止！现在可以去“结算活动”标签页等待结果并结算。');
+    await loadActivities(); 
+  } catch (error) {
+    console.error('结束活动失败:', error);
+    alert('结束活动失败，请检查是否已结束或已结算');
+  } finally {
+    loading.value = false;
+  }
+}
+
+// 结算活动
+const settleActivity = async (activityId: number) => {
+  const activity = activities.value.find(a => a.id === activityId)
+  if (!activity || activity.winnerId === undefined) {
+    alert('请选择获胜选项')
+    return
+  }
+
+  if (!isConnected.value) {
+    alert('请先连接钱包')
+    return
+  }
+
+  if (!isAdmin.value) {
+    alert('您没有管理员权限')
+    return
+  }
+
+  try {
+    loading.value = true
+    
+    const txHash = await contractStore.resolveActivity(activityId, activity.winnerId)
+    
+    console.log('活动结算成功，交易哈希:', txHash)
     alert('活动结算完成！')
-    loadActivities()
+    
+    await loadActivities()
+  } catch (error) {
+    console.error('结算活动失败:', error)
+    alert('结算活动失败，请检查网络连接和权限')
+  } finally {
+    loading.value = false
   }
 }
 </script>
@@ -547,11 +715,6 @@ const settleActivity = (activityId: number) => {
   font-weight: 500;
 }
 
-.choice-odds {
-  color: #666;
-  font-size: 0.9rem;
-}
-
 .settlement-actions {
   display: flex;
   justify-content: flex-end;
@@ -569,5 +732,28 @@ const settleActivity = (activityId: number) => {
 textarea.form-input {
   resize: vertical;
   min-height: 80px;
+}
+
+.permission-warning {
+  text-align: center;
+  padding: 3rem;
+  color: #e74c3c;
+  background-color: #f8d7da;
+  border-radius: 8px;
+  margin: 2rem 0;
+}
+
+.loading-state, .error-state, .empty-state {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
+}
+
+.error-state {
+  color: #e74c3c;
+}
+
+.error-state button {
+  margin-top: 1rem;
 }
 </style>

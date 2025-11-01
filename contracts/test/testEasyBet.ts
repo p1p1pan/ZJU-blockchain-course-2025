@@ -1,743 +1,386 @@
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { Contract } from "ethers"; // 明确类型
+
+// --- 定义类型 ---
+// (在Ethers v5中, SignerWithAddress 是 Hardhat-Ethers 插件提供的类型)
+import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"; 
+
+// 辅助函数
+const toWei = (eth: string) => ethers.utils.parseEther(eth);
+const fromWei = (wei: any) => ethers.utils.formatEther(wei);
 
 describe("EasyBet", function () {
-  // 测试用的辅助函数
-  const toWei = (eth: string) => ethers.utils.parseEther(eth);
-  const fromWei = (wei: any) => ethers.utils.formatEther(wei);
+  
+  let easyBet: Contract,
+      betToken: Contract,
+      lotteryTicket: Contract,
+      owner: SignerWithAddress,
+      player1: SignerWithAddress,
+      player2: SignerWithAddress,
+      player3: SignerWithAddress;
 
-  // 部署合约的fixture
+  // --- 部署合约的 Fixture (已更新) ---
   async function deployEasyBetFixture() {
     const [owner, player1, player2, player3] = await ethers.getSigners();
 
-    const EasyBet = await ethers.getContractFactory("EasyBet");
-    const easyBet = await EasyBet.deploy();
+    // 1. 部署 BetToken
+    const BetTokenFactory = await ethers.getContractFactory("BetToken");
+    const betToken = await BetTokenFactory.deploy();
+    await betToken.deployed();
 
-    return { easyBet, owner, player1, player2, player3 };
+    // 2. 部署 LotteryTicket
+    const LotteryTicketFactory = await ethers.getContractFactory("LotteryTicket");
+    const lotteryTicket = await LotteryTicketFactory.deploy();
+    await lotteryTicket.deployed();
+
+    // 3. 部署 EasyBet
+    const EasyBetFactory = await ethers.getContractFactory("EasyBet");
+    const easyBet = await EasyBetFactory.deploy(
+      betToken.address,
+      lotteryTicket.address
+    );
+    await easyBet.deployed();
+
+    // 4. 转移所有权
+    await betToken.transferOwnership(easyBet.address);
+    await lotteryTicket.transferOwnership(easyBet.address);
+
+    return { easyBet, betToken, lotteryTicket, owner, player1, player2, player3 };
   }
 
+  // --- 在每个 describe 块之前加载 Fixture ---
+  beforeEach(async function () {
+    const fixture = await loadFixture(deployEasyBetFixture);
+    easyBet = fixture.easyBet;
+    betToken = fixture.betToken;
+    lotteryTicket = fixture.lotteryTicket;
+    owner = fixture.owner;
+    player1 = fixture.player1;
+    player2 = fixture.player2;
+    player3 = fixture.player3;
+  });
+
+  // --- 测试部署 ---
   describe("Deployment", function () {
-    it("Should deploy successfully", async function () {
-      const { easyBet } = await loadFixture(deployEasyBetFixture);
+    it("Should deploy successfully and set owners", async function () {
       expect(easyBet.address).to.not.equal(ethers.constants.AddressZero);
+      expect(await easyBet.owner()).to.equal(owner.address);
+      // 检查子合约的 owner 是否已转移给 EasyBet
+      expect(await betToken.owner()).to.equal(easyBet.address);
+      expect(await lotteryTicket.owner()).to.equal(easyBet.address);
     });
 
-    it("Should set the right owner", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
-      expect(await easyBet.owner()).to.equal(owner.address);
+    it("LotteryTicket ID should start from 1", async function() {
+      // 玩家领取积分并授权
+      await easyBet.connect(player1).claimBetTokens();
+      await betToken.connect(player1).approve(easyBet.address, toWei("1"));
+      
+      // 创建活动
+      await betToken.connect(owner).approve(easyBet.address, toWei("100"));
+      await easyBet.connect(owner).CreateActivity("Test", ["A", "B"], (await time.latest()) + 3600, toWei("100"));
+      
+      // 下注
+      await easyBet.connect(player1).Placebet(0, 0, toWei("1"));
+      
+      // 检查 tokenId 1
+      expect(await lotteryTicket.ownerOf(1)).to.equal(player1.address);
     });
   });
 
-  describe("CreateActivity", function () {
-    it("Should create activity successfully", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
-      
+  // --- 测试活动创建 (使用 ERC20) ---
+  describe("CreateActivity (with ERC20)", function () {
+    it("Should create activity successfully with BetToken", async function () {
       const description = "LOL世界赛总冠军预测";
       const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600; // 1小时后结束
-      const initialPot = toWei("1.0");
+      const endTime = (await time.latest()) + 3600;
+      const initialPot = toWei("1000"); // 1000 BET
 
+      // Owner 必须先拥有 BetToken (通过 claimBetTokens)
+      await easyBet.connect(owner).claimBetTokens();
+      
+      // Owner 必须先 approve EasyBet 合约花费
+      await betToken.connect(owner).approve(easyBet.address, initialPot);
+
+      // 创建活动
       await expect(
-        easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot })
+        easyBet.connect(owner).CreateActivity(description, choices, endTime, initialPot)
       ).to.emit(easyBet, "activityCreated")
-        .withArgs(0, owner.address, description, endTime);
+       .withArgs(0, owner.address, description, endTime);
 
       // 验证活动信息
-      const activity = await easyBet.activities(0);
+      const activity = await easyBet.getActivityDetails(0); // 使用 getter
       expect(activity.owner).to.equal(owner.address);
       expect(activity.description).to.equal(description);
       expect(activity.listedTimestamp).to.equal(endTime);
       expect(activity.over).to.be.false;
       expect(activity.totalAmount).to.equal(initialPot);
+      
+      // 验证积分已转入合约
+      expect(await betToken.balanceOf(easyBet.address)).to.equal(initialPot);
     });
 
-    it("Should fail if not owner tries to create activity", async function () {
-      const { easyBet, player1 } = await loadFixture(deployEasyBetFixture);
+    it("Should fail if owner has insufficient BetToken", async function () {
+      const description = "Test";
+      const choices = ["A", "B"];
+      const endTime = (await time.latest()) + 3600;
+      const initialPot = toWei("1000");
       
-      const description = "测试活动";
-      const choices = ["选项1", "选项2"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
+      // Owner 没有 claimBetTokens，余额为 0
+      // Owner 授权
+      await betToken.connect(owner).approve(easyBet.address, initialPot);
 
       await expect(
-        easyBet.connect(player1).CreateActivity(description, choices, endTime, { value: initialPot })
-      ).to.be.revertedWithCustomError(easyBet, "OwnableUnauthorizedAccount");
-    });
-
-    it("Should fail if choices less than 2", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
-      
-      const description = "测试活动";
-      const choices = ["只有一个选项"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await expect(
-        easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot })
-      ).to.be.revertedWith("must have choice more than 1");
-    });
-
-    it("Should fail if end time is in the past", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
-      
-      const description = "测试活动";
-      const choices = ["选项1", "选项2"];
-      const endTime = Math.floor(Date.now() / 1000) - 3600; // 1小时前
-      const initialPot = toWei("1.0");
-
-      await expect(
-        easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot })
-      ).to.be.revertedWith("stop time must later then now");
-    });
-
-    it("Should fail if no initial pot provided", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
-      
-      const description = "测试活动";
-      const choices = ["选项1", "选项2"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-
-      await expect(
-        easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: 0 })
-      ).to.be.revertedWith("Initial pot should be provided");
+        easyBet.connect(owner).CreateActivity(description, choices, endTime, initialPot)
+      ).to.be.revertedWith("ERC20: transfer amount exceeds balance");
     });
   });
 
-  describe("Placebet", function () {
-    it("Should place bet successfully", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
+  // --- 测试下注 (使用 ERC20 和 NFT) ---
+  describe("Placebet (with ERC20 & NFT)", function () {
+    let activityId: number;
 
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
+    // 在这个测试块开始前，先创建好一个活动
+    beforeEach(async function() {
+      // Owner 领取积分并创建活动
+      await easyBet.connect(owner).claimBetTokens();
+      const initialPot = toWei("1000");
+      await betToken.connect(owner).approve(easyBet.address, initialPot);
+      await easyBet.connect(owner).CreateActivity(
+        "Test Activity", 
+        ["Choice A", "Choice B"], 
+        (await time.latest()) + 3600, 
+        initialPot
+      );
+      activityId = 0;
 
-      const betAmount = toWei("0.5");
-      const choiceIndex = 0; // 选择湖人
-
-      await expect(
-        easyBet.connect(player1).Placebet(activityId, choiceIndex, { value: betAmount })
-      ).to.emit(easyBet, "BetPlaced")
-        .withArgs(activityId, player1.address, choiceIndex, betAmount);
-
-      // 验证投注信息
-      const bet = await easyBet.userBets(activityId, player1.address);
-      expect(bet.choiceIndex).to.equal(choiceIndex);
-      expect(bet.amount).to.equal(betAmount);
-      expect(bet.claimed).to.be.false;
+      // Player1 领取积分
+      await easyBet.connect(player1).claimBetTokens(); // 领取 10000 BET
     });
 
-    it("Should allow multiple bets on same choice", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      const firstBet = toWei("0.3");
-      const secondBet = toWei("0.2");
+    it("Should place bet successfully and mint NFT", async function () {
+      const betAmount = toWei("50");
       const choiceIndex = 0;
 
-      // 第一次下注
-      await easyBet.connect(player1).Placebet(activityId, choiceIndex, { value: firstBet });
-      
-      // 第二次下注（增加金额）
-      await easyBet.connect(player1).Placebet(activityId, choiceIndex, { value: secondBet });
+      // Player1 授权
+      await betToken.connect(player1).approve(easyBet.address, betAmount);
 
-      // 验证总投注金额
-      const bet = await easyBet.userBets(activityId, player1.address);
-      expect(bet.amount).to.equal(firstBet.add(secondBet));
+      // 下注
+      await expect(
+        easyBet.connect(player1).Placebet(activityId, choiceIndex, betAmount)
+      ).to.emit(easyBet, "BetPlaced")
+       .withArgs(activityId, player1.address, choiceIndex, betAmount);
+
+      // 验证 NFT 被铸造 (TokenId 应该是 1)
+      const tokenId = 1;
+      expect(await lotteryTicket.ownerOf(tokenId)).to.equal(player1.address);
+      expect(await lotteryTicket.tokenToActivity(tokenId)).to.equal(activityId);
+      expect(await lotteryTicket.tokenToChoice(tokenId)).to.equal(choiceIndex);
+      expect(await lotteryTicket.tokenToAmount(tokenId)).to.equal(betAmount);
+      
+      // 验证已售彩票数量
+      const activity = await easyBet.getActivityDetails(activityId);
+      expect(activity.soldTickets).to.equal(1);
     });
 
-    it("Should fail if activity does not exist", async function () {
-      const { easyBet, player1 } = await loadFixture(deployEasyBetFixture);
+    it("Should allow multiple bets (mints multiple NFTs)", async function () {
+      const betAmount = toWei("20");
       
-      const betAmount = toWei("0.5");
-      const nonExistentActivityId = 999;
-
-      await expect(
-        easyBet.connect(player1).Placebet(nonExistentActivityId, 0, { value: betAmount })
-      ).to.be.revertedWith("Activity does not exist");
-    });
-
-    it("Should fail if activity is over", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
+      // 玩家1授权
+      await betToken.connect(player1).approve(easyBet.address, toWei("100"));
       
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      // 先结算活动
-      await easyBet.connect(owner).ResolveActivity(activityId, 0);
+      // 第一次下注 (Choice 0)
+      await easyBet.connect(player1).Placebet(activityId, 0, betAmount);
       
-      const betAmount = toWei("0.5");
+      // 第二次下注 (Choice 1)
+      await easyBet.connect(player1).Placebet(activityId, 1, betAmount);
+
+      // 验证玩家1现在拥有 2 张彩票 (NFT)
+      expect(await lotteryTicket.balanceOf(player1.address)).to.equal(2);
       
-      await expect(
-        easyBet.connect(player1).Placebet(activityId, 0, { value: betAmount })
-      ).to.be.revertedWith("Activity is over");
-    });
-
-    it("Should fail if bet time is ended", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
+      // 验证 TokenId 1 和 2
+      expect(await lotteryTicket.ownerOf(1)).to.equal(player1.address);
+      expect(await lotteryTicket.tokenToChoice(1)).to.equal(0);
       
-      // 先创建一个正常的活动
-      const description = "正常活动";
-      const choices = ["选项1", "选项2"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600; // 1小时后结束
-      const initialPot = toWei("1.0");
+      expect(await lotteryTicket.ownerOf(2)).to.equal(player1.address);
+      expect(await lotteryTicket.tokenToChoice(2)).to.equal(1);
 
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      // 等待时间过去（模拟时间流逝）
-      await ethers.provider.send("evm_increaseTime", [3601]); // 增加3601秒
-      await ethers.provider.send("evm_mine", []); // 挖一个区块来更新时间戳
-
-      const betAmount = toWei("0.5");
-      
-      await expect(
-        easyBet.connect(player1).Placebet(activityId, 0, { value: betAmount })
-      ).to.be.revertedWith("Activity bet time is ended");
-    });
-
-    it("Should fail if invalid choice index", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      const betAmount = toWei("0.5");
-      const invalidChoiceIndex = 5; // 只有3个选项（0,1,2）
-
-      await expect(
-        easyBet.connect(player1).Placebet(activityId, invalidChoiceIndex, { value: betAmount })
-      ).to.be.revertedWith("Invalid choice index");
+      // 验证已售彩票数量
+      const activity = await easyBet.getActivityDetails(activityId);
+      expect(activity.soldTickets).to.equal(2);
     });
 
     it("Should fail if bet amount is zero", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
       await expect(
-        easyBet.connect(player1).Placebet(activityId, 0, { value: 0 })
+        easyBet.connect(player1).Placebet(activityId, 0, 0)
       ).to.be.revertedWith("Bet amount must be greater than zero");
     });
-
-    it("Should fail if bet on different choice after first bet", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      const betAmount = toWei("0.5");
-      
-      // 第一次下注选择选项0
-      await easyBet.connect(player1).Placebet(activityId, 0, { value: betAmount });
-      
-      // 尝试选择不同选项
-      await expect(
-        easyBet.connect(player1).Placebet(activityId, 1, { value: betAmount })
-      ).to.be.revertedWith("Cannot bet on multiple choices in one activity");
-    });
   });
 
-  describe("ResolveActivity", function () {
-    it("Should resolve activity successfully", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
+  // --- 测试领奖 (基于 NFT) ---
+  describe("getWins (based on NFT)", function () {
+    let activityId: number;
+    let tokenIdP1: number = 1; // P1 的彩票 ID
+    let tokenIdP2: number = 2; // P2 的彩票 ID
+
+    beforeEach(async function() {
+      // 1. 创建活动 (Owner)
+      await easyBet.connect(owner).claimBetTokens();
+      const initialPot = toWei("1000");
+      await betToken.connect(owner).approve(easyBet.address, initialPot);
+      await easyBet.connect(owner).CreateActivity(
+        "Test", ["Win", "Lose"], (await time.latest()) + 3600, initialPot
+      );
+      activityId = 0;
+
+      // 2. 玩家1下注
+      await easyBet.connect(player1).claimBetTokens();
+      const betAmountP1 = toWei("500");
+      await betToken.connect(player1).approve(easyBet.address, betAmountP1);
+      await easyBet.connect(player1).Placebet(activityId, 0, betAmountP1); // P1 投 "Win"
+
+      // 3. 玩家2下注
+      await easyBet.connect(player2).claimBetTokens();
+      const betAmountP2 = toWei("300");
+      await betToken.connect(player2).approve(easyBet.address, betAmountP2);
+      await easyBet.connect(player2).Placebet(activityId, 1, betAmountP2); // P2 投 "Lose"
       
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      const winningChoice = 1; // 勇士获胜
-
-      await expect(
-        easyBet.connect(owner).ResolveActivity(activityId, winningChoice)
-      ).to.emit(easyBet, "ActivityResolved")
-        .withArgs(activityId, winningChoice);
-
-      // 验证活动状态
-      const activity = await easyBet.activities(activityId);
-      expect(activity.over).to.be.true;
-      expect(activity.winningChoice).to.equal(winningChoice);
-    });
-
-    it("Should fail if not owner tries to resolve", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-      
-      await expect(
-        easyBet.connect(player1).ResolveActivity(activityId, 0)
-      ).to.be.revertedWithCustomError(easyBet, "OwnableUnauthorizedAccount");
-    });
-
-    it("Should fail if activity does not exist", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
-      
-      const nonExistentActivityId = 999;
-      
-      await expect(
-        easyBet.connect(owner).ResolveActivity(nonExistentActivityId, 0)
-      ).to.be.revertedWith("Activity does not exist");
-    });
-
-    it("Should fail if activity already resolved", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
-      
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      // 先结算一次
-      await easyBet.connect(owner).ResolveActivity(activityId, 0);
-      
-      // 尝试再次结算
-      await expect(
-        easyBet.connect(owner).ResolveActivity(activityId, 1)
-      ).to.be.revertedWith("Activity already resolved");
-    });
-
-    it("Should fail if invalid winning choice", async function () {
-      const { easyBet, owner } = await loadFixture(deployEasyBetFixture);
-      
-      // 先创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      const invalidWinningChoice = 5; // 只有3个选项（0,1,2）
-      
-      await expect(
-        easyBet.connect(owner).ResolveActivity(activityId, invalidWinningChoice)
-      ).to.be.revertedWith("Invalid winning choice index");
-    });
-  });
-
-  describe("getWins", function () {
-    it("Should claim winnings successfully", async function () {
-      const { easyBet, owner, player1, player2 } = await loadFixture(deployEasyBetFixture);
-      
-      // 创建一个测试活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      // 玩家下注
-      await easyBet.connect(player1).Placebet(activityId, 0, { value: toWei("0.5") }); // 湖人
-      await easyBet.connect(player2).Placebet(activityId, 1, { value: toWei("0.3") }); // 勇士
-
-      // 结算活动，勇士获胜
+      // 4. 结算活动 (P2 获胜)
       await easyBet.connect(owner).ResolveActivity(activityId, 1);
-
-      const initialBalance = await player2.getBalance();
-      
-      const tx = await easyBet.connect(player2).getWins(activityId);
-      const receipt = await tx.wait();
-      const gasUsed = receipt.gasUsed.mul(receipt.effectiveGasPrice);
-      
-      const finalBalance = await player2.getBalance();
-      const balanceIncrease = finalBalance.sub(initialBalance);
-      
-      // 验证事件
-      await expect(tx)
-        .to.emit(easyBet, "WinningsClaimed")
-        .withArgs(activityId, player2.address, balanceIncrease.add(gasUsed));
-
-      // 验证投注状态
-      const bet = await easyBet.userBets(activityId, player2.address);
-      expect(bet.claimed).to.be.true;
     });
 
-    it("Should fail if activity does not exist", async function () {
-      const { easyBet, player2 } = await loadFixture(deployEasyBetFixture);
+    it("Should claim winnings successfully using Token ID", async function () {
+      const p2InitialBalance = await betToken.balanceOf(player2.address);
       
-      const nonExistentActivityId = 999;
-      
+      // P2 使用 tokenId 2 领奖
       await expect(
-        easyBet.connect(player2).getWins(nonExistentActivityId)
-      ).to.be.revertedWith("Activity does not exist");
-    });
+        easyBet.connect(player2).getWins(tokenIdP2)
+      ).to.emit(easyBet, "WinningsClaimed");
 
-    it("Should fail if activity not resolved yet", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
+      const p2FinalBalance = await betToken.balanceOf(player2.address);
       
-      // 创建一个新活动但不结算
-      const description = "未结算活动";
-      const choices = ["选项1", "选项2"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
+      // 验证 P2 余额增加
+      expect(p2FinalBalance).to.be.gt(p2InitialBalance);
 
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const newActivityId = 0;
-      
-      await easyBet.connect(player1).Placebet(newActivityId, 0, { value: toWei("0.1") });
-      
-      await expect(
-        easyBet.connect(player1).getWins(newActivityId)
-      ).to.be.revertedWith("Activity not resolved yet");
-    });
-
-    it("Should fail if player did not bet", async function () {
-      const { easyBet, owner, player3 } = await loadFixture(deployEasyBetFixture);
-      
-      // 创建一个活动并结算
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      await easyBet.connect(owner).ResolveActivity(activityId, 0);
-      
-      await expect(
-        easyBet.connect(player3).getWins(activityId)
-      ).to.be.revertedWith("You did not place a bet on this activity");
+      // 验证彩票被标记为已领取
+      expect(await easyBet.ticketClaimed(tokenIdP2)).to.be.true;
     });
 
     it("Should fail if player's choice did not win", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      // 玩家下注湖人
-      await easyBet.connect(player1).Placebet(activityId, 0, { value: toWei("0.5") });
-
-      // 结算活动，勇士获胜
-      await easyBet.connect(owner).ResolveActivity(activityId, 1);
-
+      // P1 (投了 0) 尝试用 tokenId 1 领奖，但 1 获胜
       await expect(
-        easyBet.connect(player1).getWins(activityId)
+        easyBet.connect(player1).getWins(tokenIdP1)
       ).to.be.revertedWith("Your choice did not win");
     });
 
     it("Should fail if winnings already claimed", async function () {
-      const { easyBet, owner, player2 } = await loadFixture(deployEasyBetFixture);
+      // P2 第一次领奖
+      await easyBet.connect(player2).getWins(tokenIdP2);
       
-      // 创建一个活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      // 玩家下注勇士
-      await easyBet.connect(player2).Placebet(activityId, 1, { value: toWei("0.3") });
-
-      // 结算活动，勇士获胜
-      await easyBet.connect(owner).ResolveActivity(activityId, 1);
-
-      // 先领取一次
-      await easyBet.connect(player2).getWins(activityId);
-      
-      // 尝试再次领取
+      // P2 尝试第二次领奖
       await expect(
-        easyBet.connect(player2).getWins(activityId)
-      ).to.be.revertedWith("Winnings already claimed");
+        easyBet.connect(player2).getWins(tokenIdP2)
+      ).to.be.revertedWith("This ticket has already been claimed");
+    });
+
+    it("Should fail if trying to claim with wrong owner", async function () {
+      // P1 尝试用 P2 的 tokenId 领奖
+      await expect(
+        easyBet.connect(player1).getWins(tokenIdP2)
+      ).to.be.revertedWith("You are not the owner of this ticket");
     });
   });
 
-  describe("Complete Flow Test", function () {
-    it("Should handle complete betting flow", async function () {
-      const { easyBet, owner, player1, player2, player3 } = await loadFixture(deployEasyBetFixture);
-      
-      // 1. 创建活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("2.0");
+  // --- 测试交易市场 ---
+  describe("NFT Ticket Trading (with ERC20)", function () {
+    let activityId: number;
+    let tokenIdP1: number = 1;
 
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
+    beforeEach(async function() {
+      // 1. 创建活动 (Owner)
+      await easyBet.connect(owner).claimBetTokens();
+      const initialPot = toWei("1000");
+      await betToken.connect(owner).approve(easyBet.address, initialPot);
+      await easyBet.connect(owner).CreateActivity(
+        "Test", ["A", "B"], (await time.latest()) + 3600, initialPot
+      );
+      activityId = 0;
 
-      // 2. 玩家下注
-      await easyBet.connect(player1).Placebet(activityId, 0, { value: toWei("1.0") }); // AL
-      await easyBet.connect(player2).Placebet(activityId, 1, { value: toWei("0.5") }); // BLG
-      await easyBet.connect(player3).Placebet(activityId, 1, { value: toWei("0.3") }); // GEN 
-
-      // 3. 结算活动（BLG获胜）
-      await easyBet.connect(owner).ResolveActivity(activityId, 1);
-
-      // 4. 验证活动状态
-      const activity = await easyBet.activities(activityId);
-      expect(activity.over).to.be.true;
-      expect(activity.winningChoice).to.equal(1);
-      expect(activity.totalAmount).to.equal(toWei("3.8")); // 2.0 + 1.0 + 0.5 + 0.3
-
-      // 5. 领取奖励
-      const player2InitialBalance = await player2.getBalance();
-      const player3InitialBalance = await player3.getBalance();
-
-      await easyBet.connect(player2).getWins(activityId);
-      await easyBet.connect(player3).getWins(activityId);
-
-      // 验证余额增加
-      const player2FinalBalance = await player2.getBalance();
-      const player3FinalBalance = await player3.getBalance();
-      
-      expect(player2FinalBalance).to.be.gt(player2InitialBalance);
-      expect(player3FinalBalance).to.be.gt(player3InitialBalance);
-
-      // 6. 验证失败玩家无法领取
-      await expect(
-        easyBet.connect(player1).getWins(activityId)
-      ).to.be.revertedWith("Your choice did not win");
-    });
-  });
-
-  describe("ERC20 Token Betting", function () {
-    it("Should claim tokens successfully", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      const betTokenAddress = await easyBet.betToken();
-      const betToken = await ethers.getContractAt("BetToken", betTokenAddress);
-      
-      // 管理员给用户发放积分
-      await easyBet.connect(owner).mintTokensToUser(player1.address, toWei("1000"));
-      
-      // 检查积分余额
-      const finalBalance = await betToken.balanceOf(player1.address);
-      expect(finalBalance).to.equal(toWei("1000"));
-    });
-
-    it("Should place bet with tokens successfully", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 管理员给用户发放积分
-      await easyBet.connect(owner).mintTokensToUser(player1.address, toWei("1000"));
-      
-      // 创建活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      // 授权合约使用积分
-      const betTokenAddress = await easyBet.betToken();
-      const betToken = await ethers.getContractAt("BetToken", betTokenAddress);
-      await betToken.connect(player1).approve(easyBet.address, toWei("100"));
-
-      // 使用积分下注
-      const betAmount = toWei("50");
-      const choiceIndex = 0;
-
-      await expect(
-        easyBet.connect(player1).PlaceBetWithTokens(activityId, choiceIndex, betAmount)
-      ).to.emit(easyBet, "TokenBetPlaced")
-        .withArgs(activityId, player1.address, choiceIndex, betAmount);
-
-      // 验证投注信息
-      const bet = await easyBet.userBets(activityId, player1.address);
-      expect(bet.choiceIndex).to.equal(choiceIndex);
-      expect(bet.amount).to.equal(betAmount);
-    });
-  });
-
-  describe("NFT Ticket Trading", function () {
-    it("Should mint NFT ticket when placing bet", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
-      
-      // 创建活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
-
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      // 下注
-      const betAmount = toWei("0.5");
-      const choiceIndex = 0;
-
-      await easyBet.connect(player1).Placebet(activityId, choiceIndex, { value: betAmount });
-
-      // 验证NFT被铸造
-      const nftAddress = await easyBet.lotteryTicket();
-      const nftContract = await ethers.getContractAt("LotteryTicket", nftAddress);
-      const tokenId = 0;
-      expect(await nftContract.ownerOf(tokenId)).to.equal(player1.address);
-      expect(await nftContract.tokenToActivity(tokenId)).to.equal(activityId);
-      expect(await nftContract.tokenToChoice(tokenId)).to.equal(choiceIndex);
-      expect(await nftContract.tokenToAmount(tokenId)).to.equal(betAmount);
+      // 2. 玩家1下注
+      await easyBet.connect(player1).claimBetTokens();
+      const betAmountP1 = toWei("500");
+      await betToken.connect(player1).approve(easyBet.address, betAmountP1);
+      await easyBet.connect(player1).Placebet(activityId, 0, betAmountP1);
     });
 
     it("Should list ticket for sale", async function () {
-      const { easyBet, owner, player1 } = await loadFixture(deployEasyBetFixture);
+      const price = toWei("600");
       
-      // 创建活动并下注
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
+      // 1. P1 授权 NFT 给 EasyBet
+      await lotteryTicket.connect(player1).approve(easyBet.address, tokenIdP1);
 
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
-
-      await easyBet.connect(player1).Placebet(activityId, 0, { value: toWei("0.5") });
-      const tokenId = 0;
-
-      // 授权合约转移NFT
-      const nftAddress1 = await easyBet.lotteryTicket();
-      const nftContract1 = await ethers.getContractAt("LotteryTicket", nftAddress1);
-      await nftContract1.connect(player1).approve(easyBet.address, tokenId);
-
-      // 挂牌出售
-      const price = toWei("0.3");
+      // 2. P1 挂单
       await expect(
-        easyBet.connect(player1).listTicket(tokenId, price)
+        easyBet.connect(player1).listTicket(tokenIdP1, price)
       ).to.emit(easyBet, "TicketListed")
-        .withArgs(tokenId, player1.address, price);
+       .withArgs(tokenIdP1, player1.address, price);
 
-      // 验证挂牌信息
-      const listing = await easyBet.ticketListings(tokenId);
+      const listing = await easyBet.ticketListings(tokenIdP1);
       expect(listing.seller).to.equal(player1.address);
       expect(listing.price).to.equal(price);
       expect(listing.isListed).to.be.true;
     });
 
     it("Should buy ticket successfully", async function () {
-      const { easyBet, owner, player1, player2 } = await loadFixture(deployEasyBetFixture);
+      const price = toWei("600");
       
-      // 创建活动并下注
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
+      // P1 挂单
+      await lotteryTicket.connect(player1).approve(easyBet.address, tokenIdP1);
+      await easyBet.connect(player1).listTicket(tokenIdP1, price);
 
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
+      // P2 准备购买
+      await easyBet.connect(player2).claimBetTokens();
+      await betToken.connect(player2).approve(easyBet.address, price);
 
-      await easyBet.connect(player1).Placebet(activityId, 0, { value: toWei("0.5") });
-      const tokenId = 0;
+      const p1InitialBalance = await betToken.balanceOf(player1.address);
 
-      // 挂牌出售
-      const nftAddress2 = await easyBet.lotteryTicket();
-      const nftContract2 = await ethers.getContractAt("LotteryTicket", nftAddress2);
-      await nftContract2.connect(player1).approve(easyBet.address, tokenId);
-      const price = toWei("0.3");
-      await easyBet.connect(player1).listTicket(tokenId, price);
-
-      // 购买彩票
-      const initialBalance = await player1.getBalance();
+      // P2 购买
       await expect(
-        easyBet.connect(player2).buyTicket(tokenId, { value: price })
+        easyBet.connect(player2).buyTicket(tokenIdP1)
       ).to.emit(easyBet, "TicketBought")
-        .withArgs(tokenId, player2.address, player1.address, price);
+       .withArgs(tokenIdP1, player2.address, player1.address, price);
 
-      // 验证NFT所有权转移
-      const nftAddress3 = await easyBet.lotteryTicket();
-      const nftContract3 = await ethers.getContractAt("LotteryTicket", nftAddress3);
-      expect(await nftContract3.ownerOf(tokenId)).to.equal(player2.address);
+      // 验证 P2 拥有 NFT
+      expect(await lotteryTicket.ownerOf(tokenIdP1)).to.equal(player2.address);
       
-      // 验证卖家收到ETH
-      const finalBalance = await player1.getBalance();
-      expect(finalBalance).to.be.gt(initialBalance);
+      // 验证 P1 收到积分
+      const p1FinalBalance = await betToken.balanceOf(player1.address);
+      expect(p1FinalBalance).to.equal(p1InitialBalance.add(price));
+      
+      // 验证挂单已移除
+      const listing = await easyBet.ticketListings(tokenIdP1);
+      expect(listing.isListed).to.be.false;
     });
 
-    it("Should get order book information", async function () {
-      const { easyBet, owner, player1, player2 } = await loadFixture(deployEasyBetFixture);
+    it("Should fail to buy if activity is resolved", async function () {
+      const price = toWei("600");
       
-      // 创建活动
-      const description = "LOL世界赛总冠军预测";
-      const choices = ["AL", "BLG", "GEN"];
-      const endTime = Math.floor(Date.now() / 1000) + 3600;
-      const initialPot = toWei("1.0");
+      // P1 挂单
+      await lotteryTicket.connect(player1).approve(easyBet.address, tokenIdP1);
+      await easyBet.connect(player1).listTicket(tokenIdP1, price);
 
-      await easyBet.connect(owner).CreateActivity(description, choices, endTime, { value: initialPot });
-      const activityId = 0;
+      // Owner 结算活动
+      await easyBet.connect(owner).ResolveActivity(activityId, 0);
 
-      // 两个玩家下注并挂牌
-      await easyBet.connect(player1).Placebet(activityId, 0, { value: toWei("0.5") });
-      await easyBet.connect(player2).Placebet(activityId, 0, { value: toWei("0.3") });
+      // P2 准备购买
+      await easyBet.connect(player2).claimBetTokens();
+      await betToken.connect(player2).approve(easyBet.address, price);
 
-      const nftAddress4 = await easyBet.lotteryTicket();
-      const nftContract4 = await ethers.getContractAt("LotteryTicket", nftAddress4);
-      await nftContract4.connect(player1).approve(easyBet.address, 0);
-      await nftContract4.connect(player2).approve(easyBet.address, 1);
-
-      await easyBet.connect(player1).listTicket(0, toWei("0.4"));
-      await easyBet.connect(player2).listTicket(1, toWei("0.2"));
-
-      // 获取订单簿信息
-      const [tokenIds, prices] = await easyBet.getOrderBook(activityId, 0);
-      
-      expect(tokenIds.length).to.be.greaterThan(0);
-      expect(prices.length).to.be.greaterThan(0);
+      // P2 尝试购买已结算的彩票
+      await expect(
+        easyBet.connect(player2).buyTicket(tokenIdP1)
+      ).to.be.revertedWith("Activity is already resolved");
     });
   });
 });

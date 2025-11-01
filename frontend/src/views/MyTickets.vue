@@ -22,62 +22,119 @@
       </button>
     </div>
 
-    <!-- 我的彩票标签页 -->
     <div v-if="activeTab === 'owned'" class="tab-content">
-      <div v-if="myTickets.length === 0" class="empty-state">
+      <div v-if="loading" class="loading-state">
+        <p>正在加载彩票...</p>
+      </div>
+
+      <div v-else-if="error" class="error-state">
+        <p>{{ error }}</p>
+        <button @click="loadMyTickets" class="btn btn-primary">重试</button>
+      </div>
+
+      <div v-else-if="!isConnected" class="empty-state">
+        <p>请先连接钱包</p>
+      </div>
+
+      <div v-else-if="myTickets.length === 0" class="empty-state">
         <p>您还没有购买任何彩票</p>
         <router-link to="/activities" class="btn btn-primary">去购买彩票</router-link>
       </div>
       
-      <div v-else class="tickets-grid">
-        <div v-for="ticket in myTickets" :key="ticket.id" class="ticket-card">
-          <div class="ticket-header">
-            <h3>{{ ticket.activityTitle }}</h3>
-            <span class="ticket-status" :class="ticket.status">
-              {{ getStatusText(ticket.status) }}
-            </span>
-          </div>
-          
-          <div class="ticket-info">
-            <div class="info-row">
-              <span class="label">选择：</span>
-              <span class="value">{{ ticket.choiceName }}</span>
-            </div>
-            <div class="info-row">
-              <span class="label">购买价格：</span>
-              <span class="value">{{ ticket.purchasePrice }} ETH</span>
-            </div>
-            <div class="info-row">
-              <span class="label">购买时间：</span>
-              <span class="value">{{ formatDate(ticket.purchaseTime) }}</span>
-            </div>
-            <div class="info-row">
-              <span class="label">Token ID：</span>
-              <span class="value">#{{ ticket.tokenId }}</span>
-            </div>
-          </div>
+      <div v-else> 
+        <div class="ticket-filters">
+          <button 
+            class="tab-button" 
+            :class="{ active: ticketFilter === 'all' }"
+            @click="ticketFilter = 'all'"
+          >
+            全部彩票
+          </button>
+          <button 
+            class="tab-button" 
+            :class="{ active: ticketFilter === 'active' }"
+            @click="ticketFilter = 'active'"
+          >
+            进行中 / 挂单
+          </button>
+          <button 
+            class="tab-button" 
+            :class="{ active: ticketFilter === 'won' }"
+            @click="ticketFilter = 'won'"
+          >
+            已中奖
+          </button>
+          <button 
+            class="tab-button" 
+            :class="{ active: ticketFilter === 'lost' }"
+            @click="ticketFilter = 'lost'"
+          >
+            未中奖
+          </button>
+        </div>
 
-          <div class="ticket-actions">
-            <button 
-              v-if="ticket.status === 'active'"
-              class="btn btn-primary"
-              @click="listForSale(ticket)"
-            >
-              挂单出售
-            </button>
-            <button 
-              v-if="ticket.status === 'won'"
-              class="btn btn-success"
-              @click="claimReward(ticket)"
-            >
-              领取奖励
-            </button>
-          </div>
+        <div v-if="filteredMyTickets.length === 0" class="empty-state">
+          <p>在当前筛选条件下没有彩票</p>
+        </div>
+
+        <div v-else class="tickets-grid">
+          <div v-for="ticket in filteredMyTickets" :key="ticket.id" class="ticket-card">
+            
+            <div class="ticket-header">
+              <h3>{{ ticket.activityTitle }}</h3>
+              <span class="ticket-status" :class="ticket.status">
+                {{ getStatusText(ticket.status) }}
+              </span>
+            </div>
+            
+            <div class="ticket-info">
+              <div class="info-row">
+                <span class="label">选择：</span>
+                <span class="value">{{ ticket.choiceName }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">购买价格：</span>
+                <span class="value">{{ ticket.purchasePrice }} BET</span>
+              </div>
+              <div class="info-row">
+                <span class="label">Token ID：</span>
+                <span class="value">#{{ ticket.tokenId }}</span>
+              </div>
+            </div>
+
+            <div class="ticket-actions">
+              <button 
+                v-if="ticket.status === 'active'"
+                class="btn btn-primary"
+                @click="listForSale(ticket)"  
+                :disabled="loading || !isConnected" 
+              >
+                {{ loading ? '处理中...' : '挂单出售' }}
+              </button>
+
+              <button 
+                v-if="ticket.status === 'listed'"
+                class="btn btn-danger" 
+                @click="cancelListing(ticket)"
+                :disabled="loading || !isConnected"
+              >
+                {{ loading ? '处理中...' : '取消挂售' }}
+              </button>
+              
+              <button 
+                v-if="ticket.status === 'won'"
+                class="btn btn-success"
+                @click="claimReward(ticket)"
+                :disabled="loading || !isConnected"
+              >
+                {{ loading ? '处理中...' : '领取奖励' }}
+              </button>
+            </div>
+            </div>
         </div>
       </div>
     </div>
 
-    <!-- 交易市场标签页 -->
     <div v-if="activeTab === 'market'" class="tab-content">
       <div class="market-filters">
         <select v-model="selectedActivity" class="form-input">
@@ -88,15 +145,19 @@
         </select>
       </div>
 
-      <div v-if="marketTickets.length === 0" class="empty-state">
+      <div v-if="!isConnected" class="empty-state">
+        <p>请先连接钱包</p>
+      </div>
+
+      <div v-else-if="marketTickets.length === 0" class="empty-state">
         <p>当前没有可交易的彩票</p>
       </div>
       
       <div v-else class="tickets-grid">
-        <div v-for="ticket in filteredMarketTickets" :key="ticket.id" class="ticket-card">
+        <div v-for="ticket in filteredMarketTicketsInternal" :key="ticket.id" class="ticket-card">
           <div class="ticket-header">
             <h3>{{ ticket.activityTitle }}</h3>
-            <span class="price-tag">{{ ticket.salePrice }} ETH</span>
+            <span class="price-tag">{{ ticket.salePrice }} BET</span>
           </div>
           
           <div class="ticket-info">
@@ -106,29 +167,32 @@
             </div>
             <div class="info-row">
               <span class="label">原购买价：</span>
-              <span class="value">{{ ticket.purchasePrice }} ETH</span>
+              <span class="value">{{ ticket.purchasePrice }} BET</span>
             </div>
             <div class="info-row">
               <span class="label">卖家：</span>
-              <span class="value">{{ formatAddress(ticket.seller) }}</span>
+              <span class="value">{{ formatAddress(ticket.seller || '') }}</span>
             </div>
           </div>
 
           <div class="ticket-actions">
-            <button class="btn btn-success" @click="buyFromMarket(ticket)">
-              购买
+            <button 
+              class="btn btn-success" 
+              @click="buyFromMarket(ticket)"
+              :disabled="loading || !isConnected"
+            >
+              {{ loading ? '处理中...' : '购买' }}
             </button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 挂单出售模态框 -->
     <div v-if="showSellModal" class="modal-overlay" @click="closeSellModal">
       <div class="modal" @click.stop>
         <h3>挂单出售</h3>
         <div class="form-group">
-          <label class="form-label">出售价格 (ETH)：</label>
+          <label class="form-label">出售价格 (BET)：</label>
           <input 
             v-model="sellPrice" 
             type="number" 
@@ -138,8 +202,20 @@
           />
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" @click="confirmSell">确认挂单</button>
-          <button class="btn" @click="closeSellModal">取消</button>
+          <button 
+            class="btn btn-primary" 
+            @click="confirmSell"
+            :disabled="loading"
+          >
+            {{ loading ? '处理中...' : '确认挂单' }}
+          </button>
+          <button 
+            class="btn" 
+            @click="closeSellModal"
+            :disabled="loading"
+          >
+            取消
+          </button>
         </div>
       </div>
     </div>
@@ -148,7 +224,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useContractStore } from '@/stores/contract'
+import { ethers } from 'ethers';
 
+// Store和状态
+const contractStore = useContractStore()
+
+// 接口定义
 interface Ticket {
   id: number
   tokenId: number
@@ -156,17 +238,26 @@ interface Ticket {
   activityTitle: string
   choiceName: string
   purchasePrice: number
-  purchaseTime: string
-  status: 'active' | 'won' | 'lost' | 'sold'
+  status: 'active' | 'won' | 'lost' | 'listed' | 'claimed_reward'
   salePrice?: number
   seller?: string
+  isListed?: boolean
+  claimed?: boolean
+}
+
+// 接口定义
+interface Choice {
+  id: number;
+  name: string;
 }
 
 interface Activity {
   id: number
   title: string
+  choices: { id: number, name: string }[]
 }
 
+// 状态
 const activeTab = ref<'owned' | 'market'>('owned')
 const myTickets = ref<Ticket[]>([])
 const marketTickets = ref<Ticket[]>([])
@@ -175,131 +266,350 @@ const selectedActivity = ref('')
 const showSellModal = ref(false)
 const sellPrice = ref(0)
 const currentTicket = ref<Ticket | null>(null)
+const loading = ref(false)
+const error = ref('')
+const ticketFilter = ref<'all' | 'active' | 'won' | 'lost'>('all');
 
-const filteredMarketTickets = computed(() => {
+// 计算属性
+const isConnected = computed(() => contractStore.isConnected)
+const userAddress = computed(() => contractStore.userAddress)
+
+const filteredMarketTicketsInternal = computed(() => {
   if (!selectedActivity.value) {
-    return marketTickets.value
+    return marketTickets.value;
   }
   return marketTickets.value.filter(ticket => 
     ticket.activityId === parseInt(selectedActivity.value)
-  )
-})
+  );
+});
+
+const filteredMyTickets = computed(() => {
+  switch (ticketFilter.value) {
+    case 'active':
+      // “进行中”包括 active (未挂单) 和 listed (已挂单)
+      return myTickets.value.filter(t => t.status === 'active' || t.status === 'listed');
+    case 'won':
+      // “已中奖”包括 won (未领奖) 和 claimed_reward (已领奖)
+      return myTickets.value.filter(t => t.status === 'won' || t.status === 'claimed_reward');
+    case 'lost':
+      return myTickets.value.filter(t => t.status === 'lost');
+    case 'all':
+    default:
+      return myTickets.value; 
+  }
+});
 
 onMounted(() => {
-  loadMyTickets()
-  loadMarketTickets()
-  loadActivities()
+  if (isConnected.value) {
+    loadActivities().then(() => {
+        loadMyTickets();
+    });
+    loadMarketTickets();
+  }
 })
 
-const loadMyTickets = () => {
-  // 模拟数据，实际应该从智能合约获取
-  myTickets.value = [
-    {
-      id: 1,
-      tokenId: 1001,
-      activityId: 1,
-      activityTitle: "NBA总决赛冠军",
-      choiceName: "湖人队",
-      purchasePrice: 0.01,
-      purchaseTime: "2025-01-15T10:30:00Z",
-      status: 'active'
-    },
-    {
-      id: 2,
-      tokenId: 1002,
-      activityId: 2,
-      activityTitle: "欧冠决赛结果",
-      choiceName: "主队胜",
-      purchasePrice: 0.02,
-      purchaseTime: "2025-01-14T15:45:00Z",
-      status: 'won'
+// 加载我的彩票
+const loadMyTickets = async () => {
+  if (!contractStore.contract || !contractStore.userAddress) {
+    error.value = '请先连接钱包';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  try {
+    const ticketsInfo = await contractStore.getTicketsInfoByUser(contractStore.userAddress);
+    const activityMap = new Map(activities.value.map(act => [act.id, act]));
+    const ticketsList: Ticket[] = [];
+
+    for (const info of ticketsInfo) {
+      const activityId = Number(info.activityId);
+      const activity = activityMap.get(activityId);
+      const choiceIndex = Number(info.choiceIndex);
+      const winningChoiceNum = Number(info.winningChoice);
+      const claimed = info.claimed;
+      const activityOver = info.activityOver;
+
+      let status: Ticket['status'] = 'active';
+      if (activityOver) {
+        // 活动已结束，优先判断中奖/未中奖
+        if (winningChoiceNum === choiceIndex) {
+            status = claimed ? 'claimed_reward' : 'won';
+        } else {
+            status = 'lost';
+        }
+      } else if (info.isListed) {
+          // 活动未结束，且已挂单
+          status = 'listed';
+      }
+
+      ticketsList.push({
+        id: Number(info.tokenId),
+        tokenId: Number(info.tokenId),
+        activityId: activityId,
+        activityTitle: activity?.title || `活动 #${activityId}`,
+        choiceName: activity?.choices[choiceIndex]?.name || `选项 #${choiceIndex}`,
+        purchasePrice: parseFloat(ethers.formatEther(info.purchaseAmount)),
+        status: status,
+        isListed: info.isListed,
+        claimed: claimed,
+        salePrice: info.isListed ? parseFloat(ethers.formatEther(info.salePrice)) : undefined,
+        seller: info.isListed ? (await contractStore.getTicketListing(Number(info.tokenId))).seller : undefined
+      });
     }
-  ]
+    myTickets.value = ticketsList;
+    
+  } catch (err) {
+    console.error('加载我的彩票失败:', err);
+    error.value = '加载彩票失败';
+  } finally {
+    loading.value = false;
+  }
 }
 
-const loadMarketTickets = () => {
-  // 模拟数据，实际应该从智能合约获取
-  marketTickets.value = [
-    {
-      id: 3,
-      tokenId: 1003,
-      activityId: 1,
-      activityTitle: "NBA总决赛冠军",
-      choiceName: "勇士队",
-      purchasePrice: 0.01,
-      purchaseTime: "2025-01-13T09:20:00Z",
-      status: 'active',
-      salePrice: 0.015,
-      seller: "0x1234...5678"
+// 加载市场彩票
+const loadMarketTickets = async () => {
+  if (!contractStore.contract) {
+    return
+  }
+  loading.value = true;
+  marketTickets.value = [];
+  const allMarketTickets: Ticket[] = [];
+
+  // 确保 activities 列表已加载
+  if (activities.value.length === 0) {
+      await loadActivities();
+  }
+  const activityMap = new Map(activities.value.map(act => [act.id, act]));
+  const ticketContract = await contractStore.getLotteryTicketContract(false);
+
+  try {
+    // 遍历所有已知的活动
+    for (const activity of activities.value) {
+      
+      //  检查活动是否结算
+      const activityData = await contractStore.getActivity(activity.id);
+      if (activityData.over) {
+        continue; 
+      }
+      
+      for (const choice of activity.choices) { // 遍历该活动的所有选项
+        
+        // 获取该活动/选项组合的订单簿
+        const [tokenIds, prices] = await contractStore.getOrderBook(activity.id, choice.id);
+
+        // 遍历该订单簿中的所有彩票
+        for (let i = 0; i < tokenIds.length; i++) {
+          const tokenId = Number(tokenIds[i]);
+          if (tokenId === 0) continue; // 跳过空位
+
+          const price = parseFloat(ethers.formatEther(prices[i]));
+
+          // 获取彩票的原始购买价
+          const purchaseAmount = await ticketContract.tokenToAmount(tokenId);
+          
+          // 获取卖家信息
+          const listing = await contractStore.getTicketListing(tokenId);
+
+          allMarketTickets.push({
+            id: tokenId,
+            tokenId: tokenId,
+            activityId: activity.id,
+            activityTitle: activity.title,
+            choiceName: choice.name,
+            purchasePrice: parseFloat(ethers.formatEther(purchaseAmount)),
+            status: 'active', // 市场上的票总是 'active'
+            salePrice: price,
+            seller: listing.seller,
+            isListed: true
+          });
+        }
+      }
     }
-  ]
+    marketTickets.value = allMarketTickets;
+  } catch (err) {
+    console.error('加载市场彩票失败:', err)
+  } finally {
+    loading.value = false;
+  }
 }
 
-const loadActivities = () => {
-  activities.value = [
-    { id: 1, title: "NBA总决赛冠军" },
-    { id: 2, title: "欧冠决赛结果" }
-  ]
+// 加载活动
+const loadActivities = async () => {
+  if (!contractStore.contract) {
+    return;
+  }
+  try {
+    const nextActivityId = await contractStore.getNextActivityId();
+    const activitiesList: Activity[] = [];
+
+    for (let i = 0; i < nextActivityId; i++) {
+      try {
+        const activityData = await contractStore.getActivity(i);
+        if (activityData.owner !== '0x0000000000000000000000000000000000000000') {
+          activitiesList.push({
+            id: i,
+            title: activityData.description || `活动 #${i + 1}`,
+            choices: activityData.choices.map((name: string, index: number) => ({ id: index, name }))
+          });
+        }
+      } catch (err) {
+        console.error(`获取活动 ${i} 失败:`, err);
+      }
+    }
+    activities.value = activitiesList;
+  } catch (err) {
+    console.error('加载活动失败:', err);
+  }
 }
 
+// 获取状态文本
 const getStatusText = (status: string) => {
   const statusMap = {
     active: '进行中',
-    won: '中奖',
+    won: '中奖 (可领奖)',
     lost: '未中奖',
-    sold: '已出售'
+    listed: '挂单中', 
+    claimed_reward: '已领奖'
   }
   return statusMap[status as keyof typeof statusMap] || status
 }
 
+// 格式化日期
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString('zh-CN')
 }
 
+// 格式化地址
 const formatAddress = (address: string) => {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
 }
 
+// 挂单出售
 const listForSale = (ticket: Ticket) => {
   currentTicket.value = ticket
   sellPrice.value = ticket.purchasePrice * 1.2 // 默认加价20%
   showSellModal.value = true
 }
 
+// 关闭挂单模态框
 const closeSellModal = () => {
   showSellModal.value = false
   currentTicket.value = null
   sellPrice.value = 0
 }
 
-const confirmSell = () => {
-  if (currentTicket.value) {
-    // 这里应该调用智能合约的挂单函数
-    console.log('挂单出售:', {
-      tokenId: currentTicket.value.tokenId,
-      price: sellPrice.value
-    })
+// 确认挂单
+const confirmSell = async () => {
+  if (!currentTicket.value) return
+
+  if (!isConnected.value) {
+    alert('请先连接钱包')
+    return
+  }
+
+  try {
+    loading.value = true
     
+    const txHash = await contractStore.listTicket(
+      currentTicket.value.tokenId,
+      sellPrice.value
+    )
+    
+    console.log('挂单成功，交易哈希:', txHash)
     alert('挂单成功！')
+    
+    await loadMyTickets()
+    await loadMarketTickets()
     closeSellModal()
+  } catch (error) {
+    console.error('挂单失败:', error)
+    alert('挂单失败，请检查网络连接')
+  } finally {
+    loading.value = false
   }
 }
 
-const buyFromMarket = (ticket: Ticket) => {
-  // 这里应该调用智能合约的购买函数
-  console.log('从市场购买:', {
-    tokenId: ticket.tokenId,
-    price: ticket.salePrice
-  })
-  
-  alert('购买成功！')
+// 从市场购买
+const buyFromMarket = async (ticket: Ticket) => {
+  if (!isConnected.value) {
+    alert('请先连接钱包')
+    return
+  }
+
+  if (!ticket.salePrice) {
+    alert('价格信息错误')
+    return
+  }
+
+  try {
+    loading.value = true
+    
+    const txHash = await contractStore.buyTicket(
+      ticket.tokenId,
+      ticket.salePrice
+    )
+    
+    console.log('购买成功，交易哈希:', txHash)
+    alert('购买成功！')
+    
+    await loadMyTickets()
+    await loadMarketTickets()
+  } catch (error) {
+    console.error('购买失败:', error)
+    alert('购买失败，请检查余额和网络连接')
+  } finally {
+    loading.value = false
+  }
 }
 
-const claimReward = (ticket: Ticket) => {
-  // 这里应该调用智能合约的领取奖励函数
-  console.log('领取奖励:', ticket.tokenId)
-  
-  alert('奖励领取成功！')
+// 取消挂单
+const cancelListing = async (ticket: Ticket) => {
+  if (!isConnected.value) {
+    alert('请先连接钱包');
+    return;
+  }
+
+  try {
+    loading.value = true;
+    
+    // 调用 store 中的 delistTicket
+    const txHash = await contractStore.delistTicket(ticket.tokenId);
+    
+    console.log('取消挂单成功，交易哈希:', txHash);
+    alert('取消挂单成功！');
+    
+    await loadMyTickets();
+    await loadMarketTickets();
+  } catch (error) {
+    console.error('取消挂单失败:', error);
+    alert('取消挂单失败，请检查网络连接');
+  } finally {
+    loading.value = false;
+  }
+}
+
+// 领取奖励
+const claimReward = async (ticket: Ticket) => {
+  if (!isConnected.value) {
+    alert('请先连接钱包')
+    return
+  }
+
+  try {
+    loading.value = true
+    
+    const txHash = await contractStore.getWins(ticket.tokenId);
+    
+    console.log('领取奖励成功，交易哈希:', txHash)
+    alert('奖励领取成功！')
+    
+    await loadMyTickets()
+  } catch (error) {
+    console.error('领取奖励失败:', error)
+    alert('领取奖励失败，请检查是否中奖')
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -321,6 +631,13 @@ const claimReward = (ticket: Ticket) => {
 
 .tabs {
   display: flex;
+  border-bottom: 2px solid #eee;
+  margin-bottom: 2rem;
+}
+
+.ticket-filters {
+  display: flex;
+  flex-wrap: wrap; /* 允许换行 */
   border-bottom: 2px solid #eee;
   margin-bottom: 2rem;
 }
@@ -434,6 +751,20 @@ const claimReward = (ticket: Ticket) => {
   text-align: center;
   padding: 3rem;
   color: #666;
+}
+
+.loading-state, .error-state {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
+}
+
+.error-state {
+  color: #e74c3c;
+}
+
+.error-state button {
+  margin-top: 1rem;
 }
 
 .market-filters {
