@@ -109,4 +109,3 @@
 
 - 如何实现ETH和ERC20的兑换？ [参考讲解](https://www.wtf.academy/en/docs/solidity-103/DEX/)
 
-如果有其它参考的内容，也请在这里陈列。

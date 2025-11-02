@@ -461,7 +461,7 @@ const loadActivities = async () => {
         if (activityData.owner !== '0x0000000000000000000000000000000000000000') {
           activitiesList.push({
             id: i,
-            title: activityData.description || `活动 #${i + 1}`,
+            title: activityData.title || `活动 #${i + 1}`,
             choices: activityData.choices.map((name: string, index: number) => ({ id: index, name }))
           });
         }

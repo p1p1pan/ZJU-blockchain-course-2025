@@ -338,7 +338,7 @@ const loadActivities = async () => {
 
         const activity: Activity = {
           id: i,
-          title: `活动 #${i + 1}`,
+          title: activityData.title || `活动 #${i + 1}`,
           description: activityData.description,
           choices: choices.map((choice: string, index: number) => ({
             id: index,
@@ -428,6 +428,11 @@ const createActivity = async () => {
     return
   }
 
+  if (!newActivity.value.title.trim()) {
+            alert('请输入活动标题')
+            return
+  }
+
   if (newActivity.value.choices.length < 2) {
     alert('至少需要两个选项')
     return
@@ -454,6 +459,7 @@ const createActivity = async () => {
     loading.value = true
     
     const activityData = {
+      title: newActivity.value.title,
       description: newActivity.value.description,
       choices: newActivity.value.choices.map(choice => choice.name),
       prizePool: newActivity.value.prizePool,

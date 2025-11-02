@@ -95,6 +95,7 @@ contract EasyBet is Ownable, ReentrancyGuard {
     struct Activity {
         address owner; // 创建者
         uint256 listedTimestamp; // 截止时间
+        string title;   // 活动标题
         string[] choices; // 选项(需大于等于二)
         string description; // 活动描述
         bool over; // 是否结束
@@ -164,6 +165,7 @@ contract EasyBet is Ownable, ReentrancyGuard {
 
     // 创建活动
     function CreateActivity(
+        string memory _title,
         string memory _description,
         string[] memory _choices,
         uint256 _listedTimerstamp,
@@ -179,6 +181,7 @@ contract EasyBet is Ownable, ReentrancyGuard {
         uint256 newActivityId = nextActivityId++;
         Activity storage newActivity = activities[newActivityId];
         newActivity.owner = msg.sender;
+        newActivity.title = _title;
         newActivity.description = _description;
         newActivity.choices = _choices;
         newActivity.listedTimestamp = _listedTimerstamp;
@@ -473,6 +476,7 @@ contract EasyBet is Ownable, ReentrancyGuard {
         view
         returns (
             address owner,
+            string memory title,
             uint256 listedTimestamp,
             string[] memory choices,
             string memory description,
@@ -485,6 +489,7 @@ contract EasyBet is Ownable, ReentrancyGuard {
         Activity storage activity = activities[_activityId];
         return (
             activity.owner,
+            activity.title,
             activity.listedTimestamp,
             activity.choices,
             activity.description,

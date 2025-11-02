@@ -107,7 +107,7 @@
         <div class="form-group">
           <label class="form-label">下注金额：</label>
           <span class="price">
-            {{ (buyAmount).toFixed(0) }} 积分
+            {{ (buyAmount || 0).toFixed(2) }} 积分
           </span>
         </div>
         <div class="modal-actions">
@@ -216,7 +216,7 @@ const loadActivities = async () => {
 
         const activity: Activity = {
           id: i,
-          title: activityData.description || `活动 #${i + 1}`, // 使用 description 作为 title
+          title: activityData.title || `活动 #${i + 1}`,
           description: activityData.description,
           choices: choices.map((choice: string, index: number) => ({
             id: index,

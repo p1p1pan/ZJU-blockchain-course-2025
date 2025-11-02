@@ -227,6 +227,7 @@ export const useContractStore = defineStore('contract', () => {
 
       const contractWithSigner = getContractWithSigner()
       const tx = await (contractWithSigner as any).CreateActivity(
+        activityData.title,
         activityData.description,
         activityData.choices,
         deadline,
@@ -384,13 +385,14 @@ export const useContractStore = defineStore('contract', () => {
       const activityData = await (contract.value as any).getActivityDetails.staticCall(activityId);
       return {
         owner: activityData[0],
-        listedTimestamp: activityData[1],
-        choices: activityData[2],
-        description: activityData[3],
-        over: activityData[4],
-        winningChoice: activityData[5],
-        totalAmount: activityData[6],
-        soldTickets: activityData[7] 
+        title: activityData[1],
+        listedTimestamp: activityData[2],
+        choices: activityData[3],
+        description: activityData[4],
+        over: activityData[5],
+        winningChoice: activityData[6],
+        totalAmount: activityData[7],
+        soldTickets: activityData[8] 
       };
     } catch (error) {
       console.error('获取活动信息失败:', error)
