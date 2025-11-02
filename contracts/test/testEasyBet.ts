@@ -76,7 +76,8 @@ describe("EasyBet", function () {
       // 玩家领取积分并授权
       await easyBet.connect(player1).claimBetTokens();
       await betToken.connect(player1).approve(easyBet.address, toWei("1"));
-      
+      await easyBet.connect(owner).claimBetTokens();
+
       // 创建活动
       await betToken.connect(owner).approve(easyBet.address, toWei("100"));
       await easyBet.connect(owner).CreateActivity("Test", ["A", "B"], (await time.latest()) + 3600, toWei("100"));
@@ -131,9 +132,9 @@ describe("EasyBet", function () {
       // Owner 授权
       await betToken.connect(owner).approve(easyBet.address, initialPot);
 
-      await expect(
+await expect(
         easyBet.connect(owner).CreateActivity(description, choices, endTime, initialPot)
-      ).to.be.revertedWith("ERC20: transfer amount exceeds balance");
+      ).to.be.revertedWithCustomError(betToken,"ERC20InsufficientBalance");
     });
   });
 

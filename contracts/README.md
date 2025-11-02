@@ -35,9 +35,11 @@
     npx hardhat run scripts/deploy.ts --network ganache
     ```
 
-### 运行测试(已废弃)
+### 运行测试
 
 * 要运行自动化测试，请执行：
     ```bash
     npx hardhat test
     ```
+
+  

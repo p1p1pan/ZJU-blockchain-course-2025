@@ -275,12 +275,25 @@ const isConnected = computed(() => contractStore.isConnected)
 const userAddress = computed(() => contractStore.userAddress)
 
 const filteredMarketTicketsInternal = computed(() => {
-  if (!selectedActivity.value) {
-    return marketTickets.value;
+  const currentUserAddress = userAddress.value ? userAddress.value.toLowerCase() : '';
+  
+  let filtered = marketTickets.value;
+
+  // 1. 过滤掉用户自己挂的单
+  if (currentUserAddress) {
+    filtered = filtered.filter(ticket => 
+      ticket.seller && ticket.seller.toLowerCase() !== currentUserAddress
+    );
   }
-  return marketTickets.value.filter(ticket => 
-    ticket.activityId === parseInt(selectedActivity.value)
-  );
+
+  // 2. 按活动ID过滤
+  if (selectedActivity.value) {
+    filtered = filtered.filter(ticket => 
+      ticket.activityId === parseInt(selectedActivity.value)
+    );
+  }
+  
+  return filtered;
 });
 
 const filteredMyTickets = computed(() => {
